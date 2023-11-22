@@ -22,11 +22,11 @@ import torch
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from learning.data_management.datasets import ModelDataset
-from learning.network.losses import get_error_and_loss
-from learning.network.model_factory import get_model
-from learning.utils.argparse_utils import arg_conversion
-from learning.utils.logging import logging
+from src.learning.data_management.datasets import ModelDataset
+from src.learning.network.losses import get_error_and_loss
+from src.learning.network.model_factory import get_model
+from src.learning.utils.argparse_utils import arg_conversion
+from src.learning.utils.logging import logging
 
 
 def get_datalist(list_path):
@@ -333,7 +333,7 @@ def train(args):
                     return
 
             val_attr_dict = get_inference(net_config, network, val_loader, device)
-            write_summary(summary_writer, val_attr_dict, epoch, optimizer, "val")
+            write_summary(summary_writer, vazl_attr_dict, epoch, optimizer, "val")
             current_loss = np.mean(val_attr_dict["losses"])
 
             if current_loss < best_loss:

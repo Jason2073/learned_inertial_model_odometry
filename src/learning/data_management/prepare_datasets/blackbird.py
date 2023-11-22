@@ -70,11 +70,18 @@ def prepare_dataset(args):
     # read seq names
     seq_names = []
     seq_names.append(utils.get_datalist(os.path.join(dataset_dir, args.data_list)))
+    print(seq_names)
     seq_names = [item for sublist in seq_names for item in sublist]
+    print("Seq:" + str(seq_names))
 
     for idx, seq_name in enumerate(seq_names):
-        base_seq_name = os.path.dirname(os.path.dirname(seq_name))
+        print(seq_name)
+        # base_seq_name = os.path.dirname(os.path.dirname(seq_name))
+        base_seq_name = os.path.dirname(seq_name)
+        print(base_seq_name)
         data_dir = os.path.join(dataset_dir, base_seq_name)
+        print(base_seq_name)
+        print(data_dir)
         assert os.path.isdir(data_dir), '%s' % data_dir
         rosbag_fn = os.path.join(data_dir, 'rosbag.bag')
 
@@ -89,6 +96,7 @@ def prepare_dataset(args):
 
         print('Reading data from %s' % rosbag_fn)
         with rosbag.Bag(rosbag_fn, 'r') as bag:
+
             for (topic, msg, ts) in bag.read_messages():
                 if topic == imu_topic:
                     imu_i = np.array([
@@ -224,7 +232,8 @@ def prepare_dataset(args):
         thrusts = thrusts_tmp
 
         ts = raw_imu[:, 0]
-
+        print(ts.shape)
+        print(ts)
         # Calibrate
         imu_calibrator = utils.getImuCalib("Blackbird")
         b_g = imu_calibrator["gyro_bias"]
@@ -233,18 +242,46 @@ def prepare_dataset(args):
         a_calib = raw_imu[:, 4:].T - b_a[:, None]
         calib_imu = np.concatenate((raw_imu[:, 0].reshape((-1, 1)), w_calib.T, a_calib.T), axis=1)
 
-        # sample relevant times
-        ts0_train, ts1_train = train_times[base_seq_name]
-        idx0_train = np.where(ts > ts0_train)[0][0]
-        idx1_train = np.where(ts > ts1_train)[0][0]
+        print(train_times.keys())
+        try:
+            # sample relevant times if in times, otherwise default to percents
+            ts0_train, ts1_train = train_times[base_seq_name]
+            idx0_train = np.where(ts > ts0_train)[0][0]
+            idx1_train = np.where(ts > ts1_train)[0][0]
 
-        ts0_val, ts1_val = val_times[base_seq_name]
-        idx0_val = np.where(ts > ts0_val)[0][0]
-        idx1_val = np.where(ts > ts1_val)[0][0]
+            ts0_val, ts1_val = val_times[base_seq_name]
+            idx0_val = np.where(ts > ts0_val)[0][0]
+            idx1_val = np.where(ts > ts1_val)[0][0]
 
-        ts0_test, ts1_test = test_times[base_seq_name]
-        idx0_test = np.where(ts > ts0_test)[0][0]
-        idx1_test = np.where(ts > ts1_test)[0][0]
+            ts0_test, ts1_test = test_times[base_seq_name]
+            idx0_test = np.where(ts > ts0_test)[0][0]
+            idx1_test = np.where(ts > ts1_test)[0][0]
+
+            start_time = ts[0]
+            end_time = ts[-1]
+            print(f"start: {start_time}, end: {end_time}, diff: {end_time - start_time}")
+            print(f"ts0: {ts0_train}, ts1: {ts1_train}, diff: {end_time - start_time}")
+
+        except KeyError:
+            print("Assuming split for train/test/val sets, to set this properly populate the start and stop times in blackbird.py")
+            start_time = ts[0]
+            end_time = ts[-1]
+            print(f"start: {start_time}, end: {end_time}, diff: {end_time - start_time}")
+            ts0_train = start_time
+            ts1_train = start_time + (end_time - start_time) * 0.5
+            idx0_train = np.where(ts > ts0_train)[0][0]
+            idx1_train = np.where(ts > ts1_train)[0][0]
+
+            ts0_val = ts1_train
+            ts1_val = ts0_val + (end_time - start_time) * 0.2
+            idx0_val = np.where(ts > ts0_val)[0][0]
+            idx1_val = np.where(ts > ts1_val)[0][0]
+
+
+            ts0_test = ts1_val
+            ts1_test = ts0_test + (end_time - start_time) * 0.2
+            idx0_test = np.where(ts > ts0_test)[0][0]
+            idx1_test = np.where(ts > ts1_test)[0][0]
 
         ts_train = ts[idx0_train:idx1_train]
         raw_imu_train = raw_imu[idx0_train:idx1_train]
@@ -274,7 +311,8 @@ def prepare_dataset(args):
 
         # Save
         # train
-        out_dir = os.path.join(data_dir, "imo", "train")
+        # out_dir = os.path.join(data_dir, "imo", "train")
+        out_dir = os.path.join(data_dir, "train")
         if not os.path.exists(out_dir):
             os.makedirs(out_dir)
         out_fn = os.path.join(out_dir, "data.hdf5")
@@ -292,13 +330,13 @@ def prepare_dataset(args):
             gyro_bias = f.create_dataset("gyro_bias", data=b_g)
             accel_bias = f.create_dataset("accel_bias", data=b_a)
 
-        if args.save_txt:
+        if not args.skip_txt:
             np.savetxt(os.path.join(out_dir, "imu_raw.txt"),
                        raw_imu_train, fmt='%.12f', header='ts wx wy wz ax ay az')
             np.savetxt(os.path.join(out_dir, "imu_calib.txt"),
                        calib_imu_train, fmt='%.12f', header='ts wx wy wz ax ay az')
             np.savetxt(os.path.join(out_dir, "stamped_groundtruth_imu.txt"),
-                       gt_traj_train, fmt='%.12f', header='ts x y z qx qy qz qw')
+                       gt_traj_train, fmt='%.12f', header='ts x y z qx qy qz qw vx vy vz')
             np.savetxt(os.path.join(out_dir, "collective_thrust.txt"),
                        np.concatenate((ts_train.reshape((-1, 1)), thrusts_train), axis=1),
                        fmt='%.12f', header='ts thrust [m/s2]')
@@ -306,7 +344,8 @@ def prepare_dataset(args):
         print("File data.hdf5 written to " + out_fn)
 
         # val
-        out_dir = os.path.join(data_dir, "imo", "val")
+        # out_dir = os.path.join(data_dir, "imo", "val")
+        out_dir = os.path.join(data_dir,  "val")
         if not os.path.exists(out_dir):
             os.makedirs(out_dir)
         out_fn = os.path.join(out_dir, "data.hdf5")
@@ -324,7 +363,7 @@ def prepare_dataset(args):
             gyro_bias = f.create_dataset("gyro_bias", data=b_g)
             accel_bias = f.create_dataset("accel_bias", data=b_a)
 
-        if args.save_txt:
+        if not args.skip_txt:
             np.savetxt(os.path.join(out_dir, "imu_raw.txt"),
                        raw_imu_val, fmt='%.12f', header='ts wx wy wz ax ay az')
             np.savetxt(os.path.join(out_dir, "imu_calib.txt"),
@@ -338,7 +377,8 @@ def prepare_dataset(args):
         print("File data.hdf5 written to " + out_fn)
 
         # test
-        out_dir = os.path.join(data_dir, "imo", "test")
+        # out_dir = os.path.join(data_dir, "imo", "test")
+        out_dir = os.path.join(data_dir, "test")
         if not os.path.exists(out_dir):
             os.makedirs(out_dir)
         out_fn = os.path.join(out_dir, "data.hdf5")
@@ -356,7 +396,7 @@ def prepare_dataset(args):
             gyro_bias = f.create_dataset("gyro_bias", data=b_g)
             accel_bias = f.create_dataset("accel_bias", data=b_a)
 
-        if args.save_txt:
+        if not args.skip_txt:
             np.savetxt(os.path.join(out_dir, "imu_raw.txt"),
                        raw_imu_test, fmt='%.12f', header='ts wx wy wz ax ay az')
             np.savetxt(os.path.join(out_dir, "imu_calib.txt"),
@@ -374,7 +414,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset_dir", type=str)
     parser.add_argument("--data_list", type=str)
-    parser.add_argument("--save_txt", action="store_true")
+    parser.add_argument("--skip_txt", action="store_true")
     args = parser.parse_args()
 
     prepare_dataset(args)

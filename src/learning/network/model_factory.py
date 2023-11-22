@@ -10,7 +10,7 @@ This file is subject to the terms and conditions defined in the file
 Reference: https://github.com/CathIAS/TLIO/blob/master/src/network/model_factory.py
 """
 
-from learning.network.model_tcn import Tcn
+from src.learning.network.model_tcn import Tcn
 
 
 def get_model(input_dim=6, output_dim=3):

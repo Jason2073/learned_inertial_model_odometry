@@ -1,0 +1,1 @@
+python blackbird.py --dataset_dir ../../../../datasets/Blackbird --data_list train.txt --save_txt

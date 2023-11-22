@@ -17,8 +17,7 @@ import random
 import h5py
 import numpy as np
 from torch.utils.data import Dataset
-
-import learning.utils.pose as pose
+import src.learning.utils.pose as pose
 
 
 class CompiledSequence(ABC):

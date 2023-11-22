@@ -17,11 +17,11 @@ import progressbar
 from scipy.interpolate import interp1d
 from scipy.spatial.transform import Rotation, Slerp
 
-from filter.python.src.data_io import DataIO
-from filter.python.src.filter_runner import FilterRunner
-from filter.python.src.utils.dotdict import dotdict
-from filter.python.src.utils.logging import logging
-from filter.python.src.utils.misc import from_usec_to_sec, from_sec_to_usec
+from src.filter.python.src.data_io import DataIO
+from src.filter.python.src.filter_runner import FilterRunner
+from src.filter.python.src.utils.dotdict import dotdict
+from src.filter.python.src.utils.logging import logging
+from src.filter.python.src.utils.misc import from_usec_to_sec, from_sec_to_usec
 
 
 class FilterManager:
