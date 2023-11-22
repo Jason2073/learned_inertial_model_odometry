@@ -1,1 +1,5 @@
 .idea/
+datasets
+results/checkpoints/
+results/logs/
+NOTES
