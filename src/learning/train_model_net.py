@@ -333,7 +333,7 @@ def train(args):
                     return
 
             val_attr_dict = get_inference(net_config, network, val_loader, device)
-            write_summary(summary_writer, vazl_attr_dict, epoch, optimizer, "val")
+            write_summary(summary_writer, val_attr_dict, epoch, optimizer, "val")
             current_loss = np.mean(val_attr_dict["losses"])
 
             if current_loss < best_loss:

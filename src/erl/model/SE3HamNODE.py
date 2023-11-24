@@ -15,7 +15,7 @@ from src.erl.utils import L2_loss
 
 
 class SE3HamNODE(torch.nn.Module):
-    def __init__(self, device=None, pretrain = True, M_net1  = None, M_net2 = None, D_net1  = None, D_net2  = None, V_net = None, g_net = None, udim = 2):
+    def __init__(self, device=None, args=None, pretrain = True, M_net1  = None, M_net2 = None, V_net = None, g_net = None, udim = 2, use_dnet=False,  D_net1 = None, D_net2 = None):
         super(SE3HamNODE, self).__init__()
         init_gain = 0.001
         self.xdim = 3
@@ -25,28 +25,44 @@ class SE3HamNODE(torch.nn.Module):
         self.posedim = self.xdim + self.Rdim #3 for position + 12 for rotmat
         self.twistdim = self.linveldim + self.angveldim #3 for linear vel + 3 for ang vel
         self.udim = udim
+        self.dtype = torch.float32
+
+        if args is not None:
+            if  args.nonlinearity == "relu":
+                self.nonlinearity = torch.relu
+            elif args.nonlinearity == "gelu":
+                self.nonlinearity = torch.nn.GELU
+            elif args.nonlinearity == "tanh":
+                self.nonlinearity = torch.tanh
+        else:
+            self.nonlinearity = torch.tanh
+
+        if not use_dnet:
+            self.D_net1 = None
+            self.D_net2 = None
+
         if M_net1 is None:
-            self.M_net1 = PSD(self.xdim, 400, self.linveldim, init_gain=init_gain).to(device)
+            self.M_net1 = PSD(self.xdim, 400, self.linveldim, init_gain=init_gain, nonlinearity=self.nonlinearity).to(device)
         else:
             self.M_net1 = M_net1
         if M_net2 is None:
-            self.M_net2 = PSD(self.Rdim, 400, self.twistdim - self.linveldim, init_gain=init_gain).to(device)
+            self.M_net2 = PSD(self.Rdim, 400, self.twistdim - self.linveldim, init_gain=init_gain, nonlinearity=self.nonlinearity).to(device)
         else:
             self.M_net2 = M_net2
-        # if D_net1 is None:
-        #     self.D_net1 = PSD(self.linveldim, 400, self.linveldim, init_gain=init_gain).to(device)
-        # else:
-        #     self.D_net1 = D_net1
-        # if D_net2 is None:
-        #     self.D_net2 = PSD(self.angveldim, 400, self.angveldim, init_gain=init_gain).to(device)
-        # else:
-        #     self.D_net2 = D_net2
+        if D_net1 is None and use_dnet:
+            self.D_net1 = PSD(self.linveldim, 400, self.linveldim, init_gain=init_gain, nonlinearity=self.nonlinearity).to(device)
+        else:
+            self.D_net1 = D_net1
+        if D_net2 is None and use_dnet:
+            self.D_net2 = PSD(self.angveldim, 400, self.angveldim, init_gain=init_gain, nonlinearity=self.nonlinearity).to(device)
+        else:
+            self.D_net2 = D_net2
         if V_net is None:
-            self.V_net = MLP(self.posedim, 400, 1, init_gain=init_gain).to(device)
+            self.V_net = MLP(self.posedim, 400, 1, init_gain=init_gain, nonlinearity=self.nonlinearity).to(device)
         else:
             self.V_net = V_net
         if g_net is None:
-            self.g_net = MatrixNet(self.posedim, 400, self.twistdim*self.udim, shape=(self.twistdim,self.udim), init_gain=init_gain).to(device)
+            self.g_net = MatrixNet(self.posedim, 400, self.twistdim*self.udim, shape=(self.twistdim,self.udim), init_gain=init_gain, nonlinearity=self.nonlinearity).to(device)
         else:
             self.g_net = g_net
 
@@ -67,7 +83,7 @@ class SE3HamNODE(torch.nn.Module):
         Xgrid[:, 0] = np.reshape(xx, (batch,))
         Xgrid[:, 1] = np.reshape(yy, (batch,))
         Xgrid[:, 2] = np.reshape(zz, (batch,))
-        Xgrid = torch.tensor(Xgrid, dtype=torch.float32).view(batch, 3).to(self.device)
+        Xgrid = torch.tensor(Xgrid, dtype=self.dtype).view(batch, 3).to(self.device)
         
         # Pretain M_net1
         m_net1_hat = self.M_net1(Xgrid)
@@ -89,45 +105,45 @@ class SE3HamNODE(torch.nn.Module):
             loss = L2_loss(m_net1_hat, m_guess)
             step = step + 1
         print("Pretraining Mnet1 done!", loss.detach().cpu().numpy())
-
-        # Pretain D_net1
-        d_net1_hat = self.D_net1(Xgrid)
-        # Train D_net1 to output identity matrix
-        d_guess = torch.eye(3)
-        d_guess = d_guess.reshape((1, 3, 3))
-        d_guess = d_guess.repeat(batch, 1, 1).to(self.device)
-        optim1 = torch.optim.Adam(self.D_net1.parameters(), 1e-3, weight_decay=0.0)
-        loss = L2_loss(d_net1_hat, d_guess)
-        print("Start pretraining Dnet1!", loss.detach().cpu().numpy())
-        step = 1
-        while loss > 1e-6:
-            loss.backward()
-            optim1.step()
-            optim1.zero_grad()
-            if step%10 == 0:
-                print("step", step, loss.detach().cpu().numpy())
+        if self.D_net1 is not None:
+            # Pretain D_net1
             d_net1_hat = self.D_net1(Xgrid)
+            # Train D_net1 to output identity matrix
+            d_guess = torch.eye(3)
+            d_guess = d_guess.reshape((1, 3, 3))
+            d_guess = d_guess.repeat(batch, 1, 1).to(self.device)
+            optim1 = torch.optim.Adam(self.D_net1.parameters(), 1e-3, weight_decay=0.0)
             loss = L2_loss(d_net1_hat, d_guess)
-            step = step + 1
-        print("Pretraining Dnet1 done!", loss.detach().cpu().numpy())
-
-        # Pretain D_net2
-        d_net2_hat = self.D_net2(Xgrid)
-        # Train D_net2 to output identity matrix
-        optim1 = torch.optim.Adam(self.D_net2.parameters(), 1e-3, weight_decay=0.0)
-        loss = L2_loss(d_net2_hat, d_guess)
-        print("Start pretraining Dnet2!", loss.detach().cpu().numpy())
-        step = 1
-        while loss > 1e-6:
-            loss.backward()
-            optim1.step()
-            optim1.zero_grad()
-            if step%10 == 0:
-                print("step", step, loss.detach().cpu().numpy())
+            print("Start pretraining Dnet1!", loss.detach().cpu().numpy())
+            step = 1
+            while loss > 1e-6:
+                loss.backward()
+                optim1.step()
+                optim1.zero_grad()
+                if step%10 == 0:
+                    print("step", step, loss.detach().cpu().numpy())
+                d_net1_hat = self.D_net1(Xgrid)
+                loss = L2_loss(d_net1_hat, d_guess)
+                step = step + 1
+            print("Pretraining Dnet1 done!", loss.detach().cpu().numpy())
+        if self.D_net2 is not None:
+            # Pretain D_net2
             d_net2_hat = self.D_net2(Xgrid)
+            # Train D_net2 to output identity matrix
+            optim1 = torch.optim.Adam(self.D_net2.parameters(), 1e-3, weight_decay=0.0)
             loss = L2_loss(d_net2_hat, d_guess)
-            step = step + 1
-        print("Pretraining Dnet2 done!", loss.detach().cpu().numpy())
+            print("Start pretraining Dnet2!", loss.detach().cpu().numpy())
+            step = 1
+            while loss > 1e-6:
+                loss.backward()
+                optim1.step()
+                optim1.zero_grad()
+                if step%10 == 0:
+                    print("step", step, loss.detach().cpu().numpy())
+                d_net2_hat = self.D_net2(Xgrid)
+                loss = L2_loss(d_net2_hat, d_guess)
+                step = step + 1
+            print("Pretraining Dnet2 done!", loss.detach().cpu().numpy())
 
 
         # delete Xgrid to save memory
@@ -141,7 +157,7 @@ class SE3HamNODE(torch.nn.Module):
         u1, u2, u3 = rand_[:,0], rand_[:, 1], rand_[:, 2]
         quat = np.array([np.sqrt(1 - u1) * np.sin(2 * np.pi * u2), np.sqrt(1 - u1) * np.cos(2 * np.pi * u2),
                               np.sqrt(u1) * np.sin(2 * np.pi * u3), np.sqrt(u1) * np.cos(2 * np.pi * u3)])
-        q_tensor = torch.tensor(quat.transpose(), dtype=torch.float32).view(batch, 4).to(self.device)
+        q_tensor = torch.tensor(quat.transpose(), dtype=self.dtype).view(batch, 4).to(self.device)
         R_tensor = compute_rotation_matrix_from_quaternion(q_tensor)
         R_tensor = R_tensor.view(-1, 9)
         m_net2_hat = self.M_net2(R_tensor)
@@ -167,9 +183,14 @@ class SE3HamNODE(torch.nn.Module):
         del q_tensor
         torch.cuda.empty_cache()
 
+    def get_num_params(self):
+        return sum(p.numel() for p in self.parameters() if p.requires_grad)
+
     def forward(self, t, input):
         with torch.enable_grad():
             self.nfe += 1
+            #input is [px,py,pz,qx,qy,qz,qw,vx,vy,vz,wx,wy,wz,u1,u2,u3,u4]
+
             q, q_dot, u = torch.split(input, [self.posedim, self.twistdim, self.udim], dim=1)
             x, R = torch.split(q, [self.xdim, self.Rdim], dim=1)
             q_dot_v, q_dot_w = torch.split(q_dot, [self.linveldim, self.angveldim], dim=1)
@@ -255,5 +276,5 @@ class SE3HamNODE(torch.nn.Module):
                   + torch.squeeze(torch.matmul(dM_inv_dt2, torch.unsqueeze(pw, dim=2)), dim=2)
 
             batch_size = input.shape[0]
-            zero_vec = torch.zeros(batch_size, self.udim, dtype=torch.float32, device=self.device)
+            zero_vec = torch.zeros(batch_size, self.udim, dtype=self.dtype, device=self.device)
             return torch.cat((dx, dR, dv, dw, zero_vec), dim=1)

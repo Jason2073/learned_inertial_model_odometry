@@ -14,9 +14,9 @@ def normalize_vector(v, return_mag=False):
     batch = v.shape[0]
     v_mag = torch.sqrt(v.pow(2).sum(1))  # batch
     if v.is_cuda:
-        v_mag = torch.max(v_mag, torch.autograd.Variable(torch.FloatTensor([1e-8]).cuda()))
+        v_mag = torch.max(v_mag, torch.autograd.Variable(torch.FloatTensor([1e-5]).cuda()))
     else:
-        v_mag = torch.max(v_mag, torch.autograd.Variable(torch.FloatTensor([1e-8])))
+        v_mag = torch.max(v_mag, torch.autograd.Variable(torch.FloatTensor([1e-5])))
     v_mag = v_mag.view(batch, 1).expand(batch, v.shape[1])
     v = v / v_mag
     if (return_mag == True):
