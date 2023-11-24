@@ -22,6 +22,10 @@ from filter.python.src.utils.dotdict import dotdict
 from filter.python.src.utils.logging import logging
 from filter.python.src.utils.math_utils import mat_exp
 from filter.python.src.utils.misc import from_usec_to_sec, from_sec_to_usec
+from src.erl.baseline_hamiltonian_model import Hamiltonian
+
+
+hnode = Hamiltonian()
 
 
 class FilterRunner:
@@ -126,7 +130,7 @@ class FilterRunner:
         assert net_gyr.shape[0] == self.net_input_size
         assert net_fn.shape[0] == self.net_input_size
         # get data from filter
-        R_oldest_state_wfb, _, _ = self.filter.get_past_state(t_oldest_state_us)  # 3 x 3
+        R_oldest_state_wfb, p_oldest_state, v_oldest_state, omega_oldest_state = self.filter.get_past_state(t_oldest_state_us)  # 3 x 3
 
         # dynamic rotation integration using filter states
         # Rs_net will contains delta rotation since t_begin_us
@@ -147,11 +151,11 @@ class FilterRunner:
             R_oldest_state_wfb @ Rs_bofbi[oldest_state_idx_in_net, :, :].T
         )  # [3 x 3]
         Rs_net_wfb = np.einsum("ip,tpj->tij", R_bofboldstate, Rs_bofbi)
-        net_fn_w = np.einsum("tij,tj->ti", Rs_net_wfb, net_fn)  # N x 3
-        net_gyr_w = np.einsum("tij,tj->ti", Rs_net_wfb, net_gyr)  # N x 3
+        # net_fn_w = np.einsum("tij,tj->ti", Rs_net_wfb, net_fn)  # N x 3
+        # net_gyr_w = np.einsum("tij,tj->ti", Rs_net_wfb, net_gyr)  # N x 3
         net_t_s = from_usec_to_sec(net_t_us)
 
-        return net_gyr_w, net_fn_w, net_t_s
+        return net_gyr, net_fn, net_t_s, R_oldest_state_wfb, p_oldest_state, v_oldest_state, omega_oldest_state
 
     def on_imu_measurement(self, t_us, gyr_raw, acc_raw, thrust=None):
         if self.filter.initialized:
@@ -257,10 +261,16 @@ class FilterRunner:
         assert t_begin_us <= t_oldest_state_us
 
         # get measurement from network
-        net_gyr_w, net_fn_w, net_t_s = self._get_inputs_samples_for_network(
+        net_gyr, net_fn, net_t_s, R0, p0, v0, omega0 = self._get_inputs_samples_for_network(
             t_begin_us, t_oldest_state_us, t_end_us)
-        meas, meas_cov = self.meas_source.get_displacement_measurement(
-            net_t_s, net_gyr_w, net_fn_w)
+        # meas, meas_cov = self.meas_source.get_displacement_measurement(
+        #     net_t_s, net_gyr_w, net_fn_w)
+        print(f"thrust buffer shape : {net_fn.shape}")
+        print(f"thrust : {net_fn}")
+        controls = np.zeros((len(net_t_s), 4, 1))
+        controls[:, 0, :] = net_fn[:, -1].reshape((-1, 1))
+        meas = hnode.run(control_actions=controls, x0=p0, R0=R0, v0=v0, omega0=omega0)
+        meas_cov = np.eye(meas.shape)
 
         # filter update
         is_available, innovation, jac, noise_mat = \

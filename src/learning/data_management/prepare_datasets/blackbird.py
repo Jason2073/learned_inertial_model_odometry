@@ -13,7 +13,7 @@ Prepare Blackbird dataset for training, validation, and testing.
 import argparse
 import os
 
-import h5py
+# import h5py
 import numpy as np
 from scipy.interpolate import interp1d
 from scipy.spatial.transform import Rotation, Slerp
@@ -88,6 +88,7 @@ def prepare_dataset(args):
         # Read data
         raw_imu = []  # [ts wx wy wz ax ay az]
         thrusts = []  # [ts 0. 0. mass_normalized_thrust]
+        omegas_squared = []
         dt = 0.01
         n_discarded_rpm = 0
 
@@ -124,12 +125,15 @@ def prepare_dataset(args):
                     thr = SCALE_THRUST_COEFF * thr
                     thr_i = np.array([thr_ts, 0., 0., thr])
                     thrusts.append(thr_i)
+                    omegas_i = np.array([thr_ts, (omega1 * 2 * np.pi / 60)**2, (omega2 * 2 * np.pi / 60)**2, (omega3 * 2 * np.pi / 60)**2, (omega4 * 2 * np.pi / 60)**2])
+                    omegas_squared.append(omegas_i)
 
         print('%d discarded rpm measurements' % n_discarded_rpm)
 
         raw_imu = np.asarray(raw_imu)
         thrusts = np.asarray(thrusts)
-
+        omegas_squared = np.asarray(omegas_squared)
+        print(f"omegas_squared shape : {omegas_squared.shape}")
         # load ground truth
         gt_fn = os.path.join(data_dir, 'groundTruthPoses.csv')
 
@@ -229,8 +233,13 @@ def prepare_dataset(args):
 
         # interpolate thrusts samples at imu times
         thrusts_tmp = interp1d(thrusts[:, 0], thrusts[:, 1:4], axis=0)(times_imu)
-        thrusts = thrusts_tmp
 
+        # interpolate motor speed samples at imu time
+        omegas_temp = interp1d(omegas_squared[:, 0], omegas_squared[:, 1:5], axis=0)(times_imu)
+        print(f"omegas_temp shape : {omegas_temp.shape}")
+        thrusts = thrusts_tmp
+        omegas_squared = omegas_temp
+        print(f"omegas_squared shape : {omegas_squared.shape}")
         ts = raw_imu[:, 0]
         print(ts.shape)
         print(ts)
@@ -288,21 +297,40 @@ def prepare_dataset(args):
         calib_imu_train = calib_imu[idx0_train:idx1_train]
         gt_traj_train = gt_traj[idx0_train:idx1_train]
         thrusts_train = thrusts[idx0_train:idx1_train]
+        omegas_squared_train = omegas_squared[idx0_train: idx1_train]
         i_thrusts_train = thrusts_train
+        i_omegas_squared_train = omegas_squared_train
+        print(f"omegas_squared_train: {omegas_squared_train.shape}")
+        full_state_train = np.concatenate(
+            (gt_traj_train, calib_imu_train[:, 1: 4], omegas_squared_train),
+            axis=1
+        )
 
         ts_val = ts[idx0_val:idx1_val]
         raw_imu_val = raw_imu[idx0_val:idx1_val]
         calib_imu_val = calib_imu[idx0_val:idx1_val]
         gt_traj_val = gt_traj[idx0_val:idx1_val]
         thrusts_val = thrusts[idx0_val:idx1_val]
+        omegas_squared_val = omegas_squared[idx0_val: idx1_val]
         i_thrusts_val = thrusts_val
+        i_omegas_squared_val = omegas_squared_val
+        full_state_val = np.concatenate(
+            (gt_traj_val, calib_imu_val[:, 1: 4], omegas_squared_val),
+            axis=1
+        )
 
         ts_test = ts[idx0_test:idx1_test]
         raw_imu_test = raw_imu[idx0_test:idx1_test]
         calib_imu_test = calib_imu[idx0_test:idx1_test]
         gt_traj_test = gt_traj[idx0_test:idx1_test]
         thrusts_test = thrusts[idx0_test:idx1_test]
+        omegas_squared_test = omegas_squared[idx0_test: idx1_test]
         i_thrusts_test = thrusts_test
+        i_omegas_squared_test = omegas_squared_test
+        full_state_test = np.concatenate(
+            (gt_traj_test, calib_imu_test[:, 1: 4], omegas_squared_test),
+            axis=1
+        )
 
         # Not supported on this branch
         traj_target_oris_from_imu_list = []
@@ -316,19 +344,19 @@ def prepare_dataset(args):
         if not os.path.exists(out_dir):
             os.makedirs(out_dir)
         out_fn = os.path.join(out_dir, "data.hdf5")
-        with h5py.File(out_fn, "w") as f:
-            ts = f.create_dataset("ts", data=ts_train)
-            gyro_raw = f.create_dataset("gyro_raw", data=raw_imu_train[:, 1:4])
-            accel_raw = f.create_dataset("accel_raw", data=raw_imu_train[:, 4:])
-            gyro_calib = f.create_dataset("gyro_calib", data=calib_imu_train[:, 1:4])
-            accel_calib = f.create_dataset("accel_calib", data=calib_imu_train[:, 4:])
-            traj_target = f.create_dataset("traj_target", data=gt_traj_train[:, 1:8])
-            traj_target_oris_from_imu_target = \
-                f.create_dataset("traj_target_oris_from_imu", data=traj_target_oris_from_imu[:, 1:])
-            thru = f.create_dataset("thrust", data=thrusts_train)
-            i_thru = f.create_dataset("i_thrust", data=i_thrusts_train)
-            gyro_bias = f.create_dataset("gyro_bias", data=b_g)
-            accel_bias = f.create_dataset("accel_bias", data=b_a)
+        # with h5py.File(out_fn, "w") as f:
+        #     ts = f.create_dataset("ts", data=ts_train)
+        #     gyro_raw = f.create_dataset("gyro_raw", data=raw_imu_train[:, 1:4])
+        #     accel_raw = f.create_dataset("accel_raw", data=raw_imu_train[:, 4:])
+        #     gyro_calib = f.create_dataset("gyro_calib", data=calib_imu_train[:, 1:4])
+        #     accel_calib = f.create_dataset("accel_calib", data=calib_imu_train[:, 4:])
+        #     traj_target = f.create_dataset("traj_target", data=gt_traj_train[:, 1:8])
+        #     traj_target_oris_from_imu_target = \
+        #         f.create_dataset("traj_target_oris_from_imu", data=traj_target_oris_from_imu[:, 1:])
+        #     thru = f.create_dataset("thrust", data=thrusts_train)
+        #     i_thru = f.create_dataset("i_thrust", data=i_thrusts_train)
+        #     gyro_bias = f.create_dataset("gyro_bias", data=b_g)
+        #     accel_bias = f.create_dataset("accel_bias", data=b_a)
 
         if not args.skip_txt:
             np.savetxt(os.path.join(out_dir, "imu_raw.txt"),
@@ -340,6 +368,10 @@ def prepare_dataset(args):
             np.savetxt(os.path.join(out_dir, "collective_thrust.txt"),
                        np.concatenate((ts_train.reshape((-1, 1)), thrusts_train), axis=1),
                        fmt='%.12f', header='ts thrust [m/s2]')
+            np.savetxt(os.path.join(out_dir, "erl_dataset_train.txt"),
+                       full_state_train, fmt='%.12f',
+                       header='ts x y z qx qy qz qw vx vy vz wx wy wz omega1**2 omega2**2 omega3**2 omega4**2'
+                       )
 
         print("File data.hdf5 written to " + out_fn)
 
@@ -349,19 +381,19 @@ def prepare_dataset(args):
         if not os.path.exists(out_dir):
             os.makedirs(out_dir)
         out_fn = os.path.join(out_dir, "data.hdf5")
-        with h5py.File(out_fn, "w") as f:
-            ts = f.create_dataset("ts", data=ts_val)
-            gyro_raw = f.create_dataset("gyro_raw", data=raw_imu_val[:, 1:4])
-            accel_raw = f.create_dataset("accel_raw", data=raw_imu_val[:, 4:])
-            gyro_calib = f.create_dataset("gyro_calib", data=calib_imu_val[:, 1:4])
-            accel_calib = f.create_dataset("accel_calib", data=calib_imu_val[:, 4:])
-            traj_target = f.create_dataset("traj_target", data=gt_traj_val[:, 1:8])
-            traj_target_oris_from_imu_target = \
-                f.create_dataset("traj_target_oris_from_imu", data=traj_target_oris_from_imu[:, 1:])
-            thru = f.create_dataset("thrust", data=thrusts_val)
-            i_thru = f.create_dataset("i_thrust", data=i_thrusts_val)
-            gyro_bias = f.create_dataset("gyro_bias", data=b_g)
-            accel_bias = f.create_dataset("accel_bias", data=b_a)
+        # with h5py.File(out_fn, "w") as f:
+        #     ts = f.create_dataset("ts", data=ts_val)
+        #     gyro_raw = f.create_dataset("gyro_raw", data=raw_imu_val[:, 1:4])
+        #     accel_raw = f.create_dataset("accel_raw", data=raw_imu_val[:, 4:])
+        #     gyro_calib = f.create_dataset("gyro_calib", data=calib_imu_val[:, 1:4])
+        #     accel_calib = f.create_dataset("accel_calib", data=calib_imu_val[:, 4:])
+        #     traj_target = f.create_dataset("traj_target", data=gt_traj_val[:, 1:8])
+        #     traj_target_oris_from_imu_target = \
+        #         f.create_dataset("traj_target_oris_from_imu", data=traj_target_oris_from_imu[:, 1:])
+        #     thru = f.create_dataset("thrust", data=thrusts_val)
+        #     i_thru = f.create_dataset("i_thrust", data=i_thrusts_val)
+        #     gyro_bias = f.create_dataset("gyro_bias", data=b_g)
+        #     accel_bias = f.create_dataset("accel_bias", data=b_a)
 
         if not args.skip_txt:
             np.savetxt(os.path.join(out_dir, "imu_raw.txt"),
@@ -373,6 +405,10 @@ def prepare_dataset(args):
             np.savetxt(os.path.join(out_dir, "collective_thrust.txt"),
                        np.concatenate((ts_val.reshape((-1, 1)), thrusts_val), axis=1),
                        fmt='%.12f', header='ts thrust [m/s2]')
+            np.savetxt(os.path.join(out_dir, "erl_dataset_val.txt"),
+                       full_state_test, fmt='%.12f',
+                       header='ts x y z qx qy qz qw vx vy vz wx wy wz omega1**2 omega2**2 omega3**2 omega4**2'
+                       )
 
         print("File data.hdf5 written to " + out_fn)
 
@@ -382,19 +418,19 @@ def prepare_dataset(args):
         if not os.path.exists(out_dir):
             os.makedirs(out_dir)
         out_fn = os.path.join(out_dir, "data.hdf5")
-        with h5py.File(out_fn, "w") as f:
-            ts = f.create_dataset("ts", data=ts_test)
-            gyro_raw = f.create_dataset("gyro_raw", data=raw_imu_test[:, 1:4])
-            accel_raw = f.create_dataset("accel_raw", data=raw_imu_test[:, 4:])
-            gyro_calib = f.create_dataset("gyro_calib", data=calib_imu_test[:, 1:4])
-            accel_calib = f.create_dataset("accel_calib", data=calib_imu_test[:, 4:])
-            traj_target = f.create_dataset("traj_target", data=gt_traj_test[:, 1:8])
-            traj_target_oris_from_imu_target = \
-                f.create_dataset("traj_target_oris_from_imu", data=traj_target_oris_from_imu[:, 1:])
-            thru = f.create_dataset("thrust", data=thrusts_test)
-            i_thru = f.create_dataset("i_thrust", data=i_thrusts_test)
-            gyro_bias = f.create_dataset("gyro_bias", data=b_g)
-            accel_bias = f.create_dataset("accel_bias", data=b_a)
+        # with h5py.File(out_fn, "w") as f:
+        #     ts = f.create_dataset("ts", data=ts_test)
+        #     gyro_raw = f.create_dataset("gyro_raw", data=raw_imu_test[:, 1:4])
+        #     accel_raw = f.create_dataset("accel_raw", data=raw_imu_test[:, 4:])
+        #     gyro_calib = f.create_dataset("gyro_calib", data=calib_imu_test[:, 1:4])
+        #     accel_calib = f.create_dataset("accel_calib", data=calib_imu_test[:, 4:])
+        #     traj_target = f.create_dataset("traj_target", data=gt_traj_test[:, 1:8])
+        #     traj_target_oris_from_imu_target = \
+        #         f.create_dataset("traj_target_oris_from_imu", data=traj_target_oris_from_imu[:, 1:])
+        #     thru = f.create_dataset("thrust", data=thrusts_test)
+        #     i_thru = f.create_dataset("i_thrust", data=i_thrusts_test)
+        #     gyro_bias = f.create_dataset("gyro_bias", data=b_g)
+        #     accel_bias = f.create_dataset("accel_bias", data=b_a)
 
         if not args.skip_txt:
             np.savetxt(os.path.join(out_dir, "imu_raw.txt"),
@@ -406,6 +442,10 @@ def prepare_dataset(args):
             np.savetxt(os.path.join(out_dir, "collective_thrust.txt"),
                        np.concatenate((ts_test.reshape((-1, 1)), thrusts_test), axis=1),
                        fmt='%.12f', header='ts thrust [m/s2]')
+            np.savetxt(os.path.join(out_dir, "erl_dataset_test.txt"),
+                       full_state_test, fmt='%.12f',
+                       header='ts x y z qx qy qz qw vx vy vz wx wy wz omega1**2 omega2**2 omega3**2 omega4**2'
+                       )
 
         print("File data.hdf5 written to " + out_fn)
 

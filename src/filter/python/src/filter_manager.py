@@ -225,6 +225,7 @@ class FilterManager:
                         gt_R,
                         np.atleast_2d(gt_v).T,
                         np.atleast_2d(gt_p).T,
+                        gyr_raw,
                         init_ba,
                         init_bg,
                     )
@@ -257,7 +258,7 @@ class FilterManager:
         gt_R = gt_rot.as_matrix()
 
         this.filter.reset_state_and_covariance(
-            gt_Rs, gt_ps, gt_vs, gt_R, gt_v, gt_p, state.s_ba, state.s_bg
+            gt_Rs, gt_ps, gt_vs, gt_R, gt_v, gt_p, np.zeros_like(gt_p), np.zeros_like(gt_p), state.s_ba, state.s_bg
         )
 
     def reset_filter_state_pv(self):
@@ -271,6 +272,6 @@ class FilterManager:
         p = np.zeros((3, 1))
         v = np.zeros((3, 1))
         self.runner.filter.reset_state_and_covariance(
-            state.si_Rs, ps, vs, state.s_R, v, p, state.s_ba, state.s_bg
+            state.si_Rs, ps, vs, state.s_R, v, p, np.zeros_like(v), np.zeros_like(v), state.s_ba, state.s_bg
         )
 

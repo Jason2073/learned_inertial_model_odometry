@@ -27,47 +27,56 @@ class State(object):
         self.s_p = None
         self.s_ba = None
         self.s_bg = None
+        self.s_omega = None
         self.s_timestamp_us = -1  # current state time
         self.N = 0  # number of past states
         self.si_Rs = []  # past states
         self.si_ps = []  # past states
         self.si_vs = []  # past states
+        self.si_omegas = []  # past states
         self.si_Rs_fej = []
         self.si_ps_fej = []
         self.si_vs_fej = []
+        self.si_omegas_fej = []
         self.si_timestamps_us = []
         self.unobs_shift = None
 
-    def initialize_state(self, t_us, R, v, p, ba_init, bg_init):
+    def initialize_state(self, t_us, R, v, p, omega, ba_init, bg_init):
         assert isinstance(t_us, int)
         self.s_R = R
         self.s_v = v  # m/s
         self.s_p = p  # m
+        self.s_omega = omega
         self.s_bg = bg_init  # rad/s
         self.s_ba = ba_init  # m/s^2
         self.s_timestamp_us = t_us
         self.si_Rs = []
         self.si_ps = []
         self.si_ss = []
+        self.si_omegas = []
         self.si_Rs_fej = []
         self.si_ps_fej = []
         self.si_vs_fej = []
+        self.si_omegas_fej = []
 
         self.si_timestamps_us = []
         self.unobs_shift = self.generate_unobservable_shift()
 
-    def reset_state(self, Rs, ps, vs, R, v, p, ba_init, bg_init):
+    def reset_state(self, Rs, ps, vs, R, v, p, omega, omegas, ba_init, bg_init):
         self.s_R = R
         self.s_v = v  # m/s
         self.s_p = p  # m
+        self.s_omega = omega  # rad/s
         self.s_bg = bg_init  # rad/s
         self.s_ba = ba_init  # m/s^2
         self.si_Rs = Rs
         self.si_ps = ps
         self.si_vs = vs
+        self.si_omegas = omegas
         self.si_Rs_fej = Rs
         self.si_ps_fej = ps
         self.si_vs_fej = vs
+        self.si_omegas_fej = omegas
 
     def __repr__(self):
         return f"R:\n{self.s_R}\nv:\n{self.s_v}\np:\n{self.s_p}\nbg:\n{self.s_bg}\nba:\n{self.s_ba}"
@@ -285,16 +294,16 @@ class ImuMSCKF:
         # initialize state covariance
         self.reset_covariance()
 
-    def initialize_state(self, t_us, R, v, p, ba_init, bg_init):
-        self.state.initialize_state(t_us, R, v, p, ba_init, bg_init)
+    def initialize_state(self, t_us, R, v, p, omega, ba_init, bg_init):
+        self.state.initialize_state(t_us, R, v, p, omega, ba_init, bg_init)
         self.last_timestamp_reset_us = t_us
 
-    def reset_state_and_covariance(self, Rs, ps, vs, R, v, p, ba_init, bg_init):
+    def reset_state_and_covariance(self, Rs, ps, vs, R, v, p, omega, omegas, ba_init, bg_init):
         assert len(Rs) == self.state.N
         assert len(ps) == self.state.N
         assert len(vs) == self.state.N
 
-        self.state.reset_state(Rs, ps, vs, R, v, p, ba_init, bg_init)
+        self.state.reset_state(Rs, ps, vs, R, v, p, omega, omegas, ba_init, bg_init)
         self.reset_covariance()
         self.last_timestamp_reset_us = self.state.s_timestamp_us
 
@@ -304,11 +313,11 @@ class ImuMSCKF:
         assert self.Sigma.shape[0] == self.state.N * 9 + 15
         assert self.Sigma.shape[1] == self.state.N * 9 + 15
 
-    def initialize_with_state(self, t_us, R, v, p, ba_init, bg_init):
+    def initialize_with_state(self, t_us, R, v, p, omega, ba_init, bg_init):
         assert isinstance(t_us, int)
         self.prepare_filter()
         self.initialized = True
-        self.initialize_state(t_us, R, v, p, ba_init, bg_init)
+        self.initialize_state(t_us, R, v, p, omega, ba_init, bg_init)
         logging.info("filter initialized with full state!")
 
     def initialize(self, acc, t_us, ba_init, bg_init):
@@ -318,6 +327,7 @@ class ImuMSCKF:
         self.initialize_state(
             t_us,
             get_rotation_from_gravity(acc),
+            np.zeros((3, 1)),
             np.zeros((3, 1)),
             np.zeros((3, 1)),
             ba_init,
@@ -331,8 +341,9 @@ class ImuMSCKF:
         R = self.state.si_Rs[state_idx]
         p = self.state.si_ps[state_idx]
         v = self.state.si_vs[state_idx]
+        omega = self.state.si_omegas[state_idx]
 
-        return R, p, v
+        return R, p, v, omega
 
     def get_evolving_state(self):
         R = self.state.s_R
@@ -443,9 +454,11 @@ class ImuMSCKF:
             self.state.si_Rs.append(Rd)
             self.state.si_ps.append(pd)
             self.state.si_vs.append(vd)
+            self.state.si_omegas.append(self.state.s_omega)
             self.state.si_Rs_fej.append(Rd)
             self.state.si_ps_fej.append(pd)
             self.state.si_vs_fej.append(vd)
+            self.state.si_omegas_fej.append(self.state.s_omega)
             self.state.si_timestamps_us.append(t_augmentation_us)
 
             self.state.N += 1
@@ -638,9 +651,11 @@ class ImuMSCKF:
         self.state.si_Rs = self.state.si_Rs[cut_idx + 1 :]
         self.state.si_ps = self.state.si_ps[cut_idx + 1 :]
         self.state.si_vs = self.state.si_vs[cut_idx + 1 :]
+        self.state.si_omegas = self.state.si_omegas[cut_idx + 1:]
         self.state.si_Rs_fej = self.state.si_Rs_fej[cut_idx + 1 :]
         self.state.si_ps_fej = self.state.si_ps_fej[cut_idx + 1 :]
         self.state.si_vs_fej = self.state.si_vs_fej[cut_idx + 1 :]
+        self.state.si_omegas_fej = self.state.si_omegas_fej[cut_idx + 1:]
         self.state.si_timestamps_us = self.state.si_timestamps_us[cut_idx + 1 :]
         self.state.unobs_shift = self.state.unobs_shift[9 * (cut_idx + 1) :, :]
         self.Sigma = self.Sigma[9 * (cut_idx + 1) :, 9 * (cut_idx + 1) :]
