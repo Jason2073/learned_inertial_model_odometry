@@ -3,3 +3,4 @@ datasets
 results/checkpoints/
 results/logs/
 NOTES
+*pycache
