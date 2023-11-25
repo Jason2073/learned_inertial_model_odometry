@@ -78,9 +78,11 @@ class ModelSequence(CompiledSequence):
             "Make sure that initial and final times correspond to first and last thrust measurement in %s!" % data_path
 
         # rotate to world frame
-        w_gyro_calib = np.array([pose.xyzwQuatToMat(T_wi[3:7]) @ w_i for T_wi, w_i in zip(traj_target, gyro_calib)])
-        w_thrust = np.array([pose.xyzwQuatToMat(T_wi[3:7]) @ t_i for T_wi, t_i in zip(traj_target, i_thrust)])
-        rot_mats = np.array([pose.xyzwQuatToMat(T_wi[3:7]) for T_wi in traj_target]).reshape((w_gyro_calib.shape[0], 9))
+        # w_gyro_calib = np.array([pose.xyzwQuatToMat(T_wi[3:7]) @ w_i for T_wi, w_i in zip(traj_target, gyro_calib)])
+        #need to use omega values in the body frame for the HNODE
+        gyro_calib_body = np.array([w_i for w_i in gyro_calib])
+        # w_thrust = np.array([pose.xyzwQuatToMat(T_wi[3:7]) @ t_i for T_wi, t_i in zip(traj_target, i_thrust)])
+        rot_mats = np.array([pose.xyzwQuatToMat(T_wi[3:7]) for T_wi in traj_target]).reshape((gyro_calib_body.shape[0], 9))
         poses = np.array([T_wi[0:3] for T_wi in traj_target])
         vels = np.array([T_wi[7:] for T_wi in traj_target])
 
@@ -91,7 +93,8 @@ class ModelSequence(CompiledSequence):
         # self.feat = np.concatenate([w_gyro_calib, w_thrust, full_thrust, rot_mats], axis=1)
         #TODO find a better way to do the w_ground truth, currently just passing w_gyro_calib,
         # i talked to sambaran and we're gonna test with this first
-        self.feat = np.concatenate([poses, rot_mats, vels, w_gyro_calib, full_thrust], axis=1)
+
+        self.feat = np.concatenate([poses, rot_mats, vels, gyro_calib_body, full_thrust], axis=1)
         self.traj_target = traj_target
 
     def get_feature(self):

@@ -1,22 +1,23 @@
-import torch
-import numpy as np
-import time
-import os
-from src.learning.utils.logging import logging
-from src.erl.data_management.datasets import ModelDataset
-from torch.utils.data import DataLoader
-from src.learning.utils.argparse_utils import add_bool_arg
 import argparse
-from src.erl.Hamiltonian import HNODENetwork
-from functools import partial
-import sys
 import json
-from src.erl.model.Loss import HNODELoss
-from torch.utils.tensorboard import SummaryWriter
+import os
 import signal
+import sys
+import time
+from functools import partial
 
+import numpy as np
+import torch
+from torch.utils.data import DataLoader
+from torch.utils.tensorboard import SummaryWriter
 from torchdiffeq import odeint_adjoint as odeint
-import numexpr as ne
+
+from src.erl.Hamiltonian import HNODENetwork
+from src.erl.data_management.datasets import ModelDataset
+from src.erl.model.Loss import HNODELoss
+from src.learning.utils.argparse_utils import add_bool_arg
+from src.learning.utils.logging import logging
+
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -34,7 +35,7 @@ def get_args():
     parser.add_argument("--epochs", type=int, default=1000, help="max num epochs")
     parser.add_argument("--num_threads", type=int, default=16)
     parser.add_argument("--cpu", action="store_true")
-    parser.add_argument("--nonlinearity", type=str, default="relu", help="relu,tanh,gelu")
+    parser.add_argument("--nonlinearity", type=str, default="tanh", help="relu,tanh,gelu")
     add_bool_arg(parser, "perturb_orientation", default=True)
     parser.add_argument(
         "--perturb_orientation_theta_range", type=float, default=5.0
@@ -64,10 +65,12 @@ def get_args():
     args = parser.parse_args()
     return args
 
+
 def get_datalist(list_path):
     with open(list_path) as f:
         data_list = [s.strip() for s in f.readlines() if (len(s.strip()) > 0 and not s.startswith("#"))]
     return data_list
+
 
 def torch_to_numpy(torch_arr):
     return torch_arr.cpu().detach().numpy()
@@ -75,8 +78,9 @@ def torch_to_numpy(torch_arr):
 
 def get_error_and_loss(preds, targ):
     loss = HNODELoss(targ, preds)
-    err = targ[:, 0:3, :] - preds[:, 0:3, :] #for error just use delta pos for now
+    err = targ[:, 0:3, :] - preds[:, 0:3, :]  # for error just use delta pos for now
     return err, loss
+
 
 def get_inference(args, model, data_loader, device):
     """
@@ -93,24 +97,21 @@ def get_inference(args, model, data_loader, device):
         targ = targ.to(device)
         ts = ts.to(device)
 
-        #feat has values [poses, rot_mats, vels, w_gyro_calib, full_thrust]
+        # feat has values [poses, rot_mats, vels, w_gyro_calib, full_thrust]
         # for this, we only need the full_thrust, rot_mats, pose, and v_init]
-        #model expects [px,py,pz, flatR, vx,vy,vz, wx,wy,wz, 4xthrusts]
+        # model expects [px,py,pz, flatR, vx,vy,vz, wx,wy,wz, 4xthrusts]
 
-        #make this float32
-        t_eval = (ts[1,0:2] - ts[1,0]).to(device)
+        # make this float32
+        t_eval = (ts[1, 0:2] - ts[1, 0]).to(device)
         t_eval = t_eval.type(torch.float32)
         # get network prediction
         y0 = feat[:, :, 0]
-        preds = torch.zeros((feat.shape[0], feat.shape[1], feat.shape[2]-1)).to(device)
-        for i in range(feat.shape[2]-1):
+        preds = torch.zeros((feat.shape[0], feat.shape[1], feat.shape[2] - 1)).to(device)
+        for i in range(feat.shape[2] - 1):
             dp = odeint(model, y0, t_eval, method=args.solver)
             y0 = dp[1, :, :]
             y0[:, -4:] = feat[:, -4:, i]
             preds[:, :, i] = dp[1, :, :]
-
-
-
 
         # compute loss
         # errs, loss = get_error_and_loss(dp, targ, learn_configs, device)
@@ -132,6 +133,7 @@ def get_inference(args, model, data_loader, device):
 
     return attr_dict
 
+
 def write_summary(summary_writer, attr_dict, epoch, optimizer, mode):
     """ Given the attr_dict write summary and log the losses """
     error = np.mean(attr_dict["errors"])
@@ -144,6 +146,7 @@ def write_summary(summary_writer, attr_dict, epoch, optimizer, mode):
     if epoch > 0:
         summary_writer.add_scalar(
             "optimizer/lr", optimizer.param_groups[0]["lr"], epoch - 1)
+
 
 def run_train(args, model, train_loader, device, optimizer):
     """
@@ -178,7 +181,7 @@ def run_train(args, model, train_loader, device, optimizer):
         t_eval = t_eval.type(torch.float32)
         # get network prediction
         y0 = feat[:, :, 0]
-        #TODO, to get the network to work with float32 try setting this to float 32
+        # TODO, to get the network to work with float32 try setting this to float 32
         preds = torch.zeros((feat.shape[0], feat.shape[1], feat.shape[2] - 1)).to(device)
         for i in range(feat.shape[2] - 1):
             dp = odeint(model, y0, t_eval, method=args.solver)
@@ -188,7 +191,7 @@ def run_train(args, model, train_loader, device, optimizer):
 
         # compute loss
         errs, loss = get_error_and_loss(preds, targ)
-
+        logging.info(f"LOSS: {loss}")
         # log
         losses_all.append(torch_to_numpy(loss))
         errs_norm = np.linalg.norm(torch_to_numpy(errs), axis=1)
@@ -208,19 +211,21 @@ def run_train(args, model, train_loader, device, optimizer):
 
     return train_dict
 
-def save_model(args, epoch, network, optimizer, interrupt=False):
+
+def save_model(args, epoch, model, optimizer, interrupt=False):
     if interrupt:
         model_path = os.path.join(args.out_dir, "checkpoints", "model_net", "checkpoint_latest.pt")
     else:
         model_path = os.path.join(args.out_dir, "checkpoints", "model_net", "checkpoint_%d.pt" % epoch)
     state_dict = {
-        "model_state_dict": network.state_dict(),
+        "model_state_dict": model.state_dict(),
         "epoch": epoch,
         "optimizer_state_dict": optimizer.state_dict(),
         "args": vars(args),
     }
     torch.save(state_dict, model_path)
     logging.info(f"Model saved to {model_path}")
+
 
 def create_necessary_dirs(args):
     try:
@@ -266,9 +271,10 @@ def create_necessary_dirs(args):
 
 
 def prep_wandb(args):
-    #TODO implement wandb
+    # TODO implement wandb
     print("wandb not implemented yet!")
     pass
+
 
 def main():
     args = get_args()
@@ -303,7 +309,7 @@ def main():
         run_validation = True
         val_list = get_datalist(os.path.join(args.root_dir, args.dataset, args.val_list))
 
-    #TODO check optimizer / change
+    # TODO check optimizer / change
     n_params = model.get_num_params()
     params = model.parameters()
     logging.info(f'HNODE network loaded to device {device}')
@@ -361,7 +367,7 @@ def main():
     def stop_signal_handler(args, epoch, network, optimizer, signal, frame):
         logging.info("-" * 30)
         logging.info("Early terminate")
-        save_model(args, epoch, network, optimizer, interrupt=True)
+        save_model(args, epoch, model, optimizer, interrupt=True)
         sys.exit()
 
     for epoch in range(start_epoch + 1, args.epochs):
@@ -410,5 +416,6 @@ def main():
 
     logging.info("Training complete.")
 
+
 if __name__ == "__main__":
-  main()
+    main()
