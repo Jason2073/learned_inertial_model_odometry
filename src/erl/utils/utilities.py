@@ -103,6 +103,24 @@ def compute_rotation_matrix_from_quaternion(quaternion):
     return matrix
 ################################ Loss calculation for SO(3) ################################
 
+def L2_geodesic_loss(u, u_hat, split):
+    p_hat, R_hat, v_hat = torch.split(u_hat, split, dim=2)
+    p, R, v = torch.split(u, split, dim=2)
+
+    v = v.flatten(start_dim=0, end_dim=1)
+    v_hat = v_hat.flatten(start_dim=0, end_dim=1)
+    vloss = L2_loss(v, v_hat)
+
+    p = p.flatten(start_dim=0, end_dim=1)
+    p_hat = p_hat.flatten(start_dim=0, end_dim=1)
+    p_loss = L2_loss(p, p_hat)
+    R = R.flatten(start_dim=0, end_dim=1)
+    R_hat = R_hat.flatten(start_dim=0, end_dim=1)
+    norm_R_hat = compute_rotation_matrix_from_unnormalized_rotmat(R_hat)
+    norm_R = compute_rotation_matrix_from_unnormalized_rotmat(R)
+    geo_loss, _ = compute_geodesic_loss(norm_R, norm_R_hat)
+    return p_loss + vloss + geo_loss, p_loss, vloss, geo_loss
+
 def rotmat_L2_geodesic_loss(u,u_hat, split):
     q_hat, q_dot_hat, u_hat = torch.split(u_hat, split, dim=2)
     q, q_dot, u = torch.split(u, split, dim=2)
@@ -236,6 +254,7 @@ def pose_L2_geodesic_diff(u,u_hat, split):
     norm_R = compute_rotation_matrix_from_unnormalized_rotmat(R)
     _, geo_diff = compute_geodesic_loss(norm_R, norm_R_hat)
     return l2_diff + geo_diff, l2_diff, geo_diff
+
 
 def traj_pose_L2_geodesic_loss(traj,traj_hat, split):
     total_loss = None

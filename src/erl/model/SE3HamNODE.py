@@ -15,7 +15,9 @@ from src.erl.utils import L2_loss
 
 
 class SE3HamNODE(torch.nn.Module):
-    def __init__(self, device=None, args=None, pretrain = True, M_net1  = None, M_net2 = None, V_net = None, g_net = None, udim = 2, use_dnet=False,  D_net1 = None, D_net2 = None):
+    def __init__(self, device=None, args=None, pretrain = True, M_net1  = None, M_net2 = None, V_net = None,
+                 g_net = None, udim = 2, use_dnet=False,  D_net1 = None, D_net2 = None,
+                 m1_nominal=torch.eye(3), m2_nominal=torch.eye(3), g_nominal=None):
         super(SE3HamNODE, self).__init__()
         init_gain = 0.001
         self.xdim = 3
@@ -26,6 +28,11 @@ class SE3HamNODE(torch.nn.Module):
         self.twistdim = self.linveldim + self.angveldim #3 for linear vel + 3 for ang vel
         self.udim = udim
         self.dtype = torch.float32
+
+        self.m1_nominal = m1_nominal
+        self.m2_nominal = m2_nominal
+        self.g_nominal = g_nominal
+        self.hidden_dim = 200
 
         if args is not None:
             if  args.nonlinearity == "relu":
@@ -42,27 +49,27 @@ class SE3HamNODE(torch.nn.Module):
             self.D_net2 = None
 
         if M_net1 is None:
-            self.M_net1 = PSD(self.xdim, 400, self.linveldim, init_gain=init_gain, nonlinearity=self.nonlinearity).to(device)
+            self.M_net1 = PSD(self.xdim, self.hidden_dim , self.linveldim, init_gain=init_gain, nonlinearity=self.nonlinearity).to(device)
         else:
             self.M_net1 = M_net1
         if M_net2 is None:
-            self.M_net2 = PSD(self.Rdim, 400, self.twistdim - self.linveldim, init_gain=init_gain, nonlinearity=self.nonlinearity).to(device)
+            self.M_net2 = PSD(self.Rdim, self.hidden_dim , self.twistdim - self.linveldim, init_gain=init_gain, nonlinearity=self.nonlinearity).to(device)
         else:
             self.M_net2 = M_net2
         if D_net1 is None and use_dnet:
-            self.D_net1 = PSD(self.linveldim, 400, self.linveldim, init_gain=init_gain, nonlinearity=self.nonlinearity).to(device)
+            self.D_net1 = PSD(self.linveldim, self.hidden_dim , self.linveldim, init_gain=init_gain, nonlinearity=self.nonlinearity).to(device)
         else:
             self.D_net1 = D_net1
         if D_net2 is None and use_dnet:
-            self.D_net2 = PSD(self.angveldim, 400, self.angveldim, init_gain=init_gain, nonlinearity=self.nonlinearity).to(device)
+            self.D_net2 = PSD(self.angveldim, self.hidden_dim , self.angveldim, init_gain=init_gain, nonlinearity=self.nonlinearity).to(device)
         else:
             self.D_net2 = D_net2
         if V_net is None:
-            self.V_net = MLP(self.posedim, 400, 1, init_gain=init_gain, nonlinearity=self.nonlinearity).to(device)
+            self.V_net = MLP(self.posedim, self.hidden_dim , 1, init_gain=init_gain, nonlinearity=self.nonlinearity).to(device)
         else:
             self.V_net = V_net
         if g_net is None:
-            self.g_net = MatrixNet(self.posedim, 400, self.twistdim*self.udim, shape=(self.twistdim,self.udim), init_gain=init_gain, nonlinearity=self.nonlinearity).to(device)
+            self.g_net = MatrixNet(self.posedim, self.hidden_dim , self.twistdim*self.udim, shape=(self.twistdim,self.udim), init_gain=init_gain, nonlinearity=self.nonlinearity).to(device)
         else:
             self.g_net = g_net
 
@@ -71,6 +78,8 @@ class SE3HamNODE(torch.nn.Module):
         self.nfe = 0
         if pretrain:
             self.pretrain()
+            if self.g_nominal is not None:
+                self.pretrain_g()
 
     def pretrain(self):
         x = np.arange(-10, 10, 0.5)
@@ -88,14 +97,14 @@ class SE3HamNODE(torch.nn.Module):
         # Pretain M_net1
         m_net1_hat = self.M_net1(Xgrid)
         # Train M_net1 to output identity matrix
-        m_guess = torch.eye(3)
+        m_guess = self.m1_nominal
         m_guess = m_guess.reshape((1, 3, 3))
         m_guess = m_guess.repeat(batch, 1, 1).to(self.device)
         optim1 = torch.optim.Adam(self.M_net1.parameters(), 1e-3, weight_decay=0.0)
         loss = L2_loss(m_net1_hat, m_guess)
         print("Start pretraining Mnet1!", loss.detach().cpu().numpy())
         step = 1
-        while loss > 1e-6:
+        while loss > 1e-8:
             loss.backward()
             optim1.step()
             optim1.zero_grad()
@@ -162,14 +171,14 @@ class SE3HamNODE(torch.nn.Module):
         R_tensor = R_tensor.view(-1, 9)
         m_net2_hat = self.M_net2(R_tensor)
         # Train M_net2 to output identity matrix
-        inertia_guess = torch.eye(3)
+        inertia_guess = self.m2_nominal
         inertia_guess = inertia_guess.reshape((1, 3, 3))
         inertia_guess = inertia_guess.repeat(batch, 1, 1).to(self.device)
         optim = torch.optim.Adam(self.M_net2.parameters(), 1e-3, weight_decay=0.0)
         loss = L2_loss(m_net2_hat, inertia_guess)
         print("Start pretraining Mnet2!", loss.detach().cpu().numpy())
         step = 1
-        while loss > 1e-6:
+        while loss > 1e-8:
             loss.backward()
             optim.step()
             optim.zero_grad()
@@ -181,6 +190,59 @@ class SE3HamNODE(torch.nn.Module):
         print("Pretraining Mnet2 done!", loss.detach().cpu().numpy())
         # Delete data and cache to save memory
         del q_tensor
+        del inertia_guess
+        del R_tensor
+        torch.cuda.empty_cache()
+
+    def pretrain_g(self):
+        x = np.arange(-5, 5, 0.25)
+        y = np.arange(-5, 5, 0.25)
+        z = np.arange(-5, 5, 0.25)
+        n_grid = len(z)
+        batch = n_grid ** 3
+        xx, yy, zz = np.meshgrid(x, y, z)
+        Xgrid = np.zeros([batch, 3])
+        Xgrid[:, 0] = np.reshape(xx, (batch,))
+        Xgrid[:, 1] = np.reshape(yy, (batch,))
+        Xgrid[:, 2] = np.reshape(zz, (batch,))
+        Xgrid = torch.tensor(Xgrid, dtype=torch.float32).view(batch, 3).to(self.device)
+
+        # Uniformly generate quaternion using http://planning.cs.uiuc.edu/node198.html
+        rand_ =np.random.uniform(size=(batch, 4))
+        u1, u2, u3 = rand_[:,0], rand_[:, 1], rand_[:, 2]
+        quat = np.array([np.sqrt(1 - u1) * np.sin(2 * np.pi * u2), np.sqrt(1 - u1) * np.cos(2 * np.pi * u2),
+                              np.sqrt(u1) * np.sin(2 * np.pi * u3), np.sqrt(u1) * np.cos(2 * np.pi * u3)])
+        q_tensor = torch.tensor(quat.transpose(), dtype=torch.float32).view(batch, 4).to(self.device)
+        R_tensor = compute_rotation_matrix_from_quaternion(q_tensor)
+        R_tensor = R_tensor.view(-1, 9)
+
+        pose_tensor = torch.cat((Xgrid, R_tensor), dim=1)
+
+        # g_guess = torch.zeros(self.twistdim, self.udim)
+        g_guess = self.g_nominal
+        g_guess = g_guess.reshape((1, self.twistdim, self.udim))
+        g_guess = g_guess.repeat(batch, 1, 1).to(self.device)
+
+        optim = torch.optim.Adam(self.g_net.parameters(), 1e-3, weight_decay=0.0)
+
+        g_net_hat = self.g_net(pose_tensor)
+        loss = L2_loss(g_net_hat, g_guess)
+        print("Start pretraining gnet!", loss.detach().cpu().numpy())
+        step = 1
+        while loss > 1e-8:
+            loss.backward()
+            optim.step()
+            optim.zero_grad()
+            if step%10 == 0:
+                print("step", step, loss.detach().cpu().numpy())
+            g_net_hat = self.g_net(pose_tensor)
+            loss = L2_loss(g_net_hat, g_guess)
+            step = step + 1
+        print("Pretraining gnet done!", loss.detach().cpu().numpy())
+        # delete Xgrid to save memory
+        del Xgrid
+        del q_tensor
+        del pose_tensor
         torch.cuda.empty_cache()
 
     def get_num_params(self):

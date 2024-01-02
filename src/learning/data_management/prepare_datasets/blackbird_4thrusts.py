@@ -120,8 +120,12 @@ def prepare_dataset(args):
                     thr = SCALE_THRUST_COEFF * thr
                     thr_i = np.array([thr_ts, 0., 0., thr])
                     thrusts.append(thr_i)
-                    #the thrust of each motor individually
-                    separate_thrusts.append(np.array([thr_ts, C_T*omega1**2, C_T*omega2**2, C_T*omega3**2, C_T*omega4**2]))
+                    #the thrust of each motor individually ( * -1 for direction)
+                    separate_thrusts.append(np.array([thr_ts,
+                                                      SCALE_THRUST_COEFF*C_T*omega1**2,
+                                                      SCALE_THRUST_COEFF*C_T*omega2**2,
+                                                      SCALE_THRUST_COEFF*C_T*omega3**2,
+                                                      SCALE_THRUST_COEFF*C_T*omega4**2]))
                     # print(f'Thrusts: {separate_thrusts[-1]}')
 
         print('%d discarded rpm measurements' % n_discarded_rpm)

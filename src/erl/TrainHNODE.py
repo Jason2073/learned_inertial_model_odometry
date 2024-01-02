@@ -29,7 +29,7 @@ def get_args():
     parser.add_argument("--val_list", type=str, default="", help="In folder root_dir.")
     parser.add_argument("--test_list", type=str, default="test.txt", help="In folder root_dir.")
     parser.add_argument("--batch_size", type=int, default=128)
-    parser.add_argument("--lr", type=float, default=1e-04)
+    parser.add_argument("--lr", type=float, default=5e-04)
     parser.add_argument('--solver', default='rk4', type=str, help='type of ODE Solver for Neural ODE')
     parser.add_argument("--continue_from", type=str, default=None, help="Path to model checkpoint")
     parser.add_argument("--epochs", type=int, default=1000, help="max num epochs")
@@ -57,7 +57,7 @@ def get_args():
     parser.add_argument(
         "--mode", type=str, default="train", choices=["train", "test", "eval"]
     )
-    parser.add_argument("--predict_horizon", type=int, default=2)
+    parser.add_argument("--predict_horizon", type=int, default=5)
 
     add_bool_arg(parser, "save_plots", default=False)
     add_bool_arg(parser, "show_plots", default=False)
@@ -106,12 +106,23 @@ def get_inference(args, model, data_loader, device):
         t_eval = t_eval.type(torch.float32)
         # get network prediction
         y0 = feat[:, :, 0]
+        offsets = y0[:, :3].detach().clone()
+        y0[:, :3] = y0[:, :3] - offsets
         preds = torch.zeros((feat.shape[0], feat.shape[1], feat.shape[2] - 1)).to(device)
         for i in range(feat.shape[2] - 1):
             dp = odeint(model, y0, t_eval, method=args.solver)
+            #example:
+            # y0:
+            # Pos: 0.0, 0.0, 0.0,
+            # Rot: 0.65283674, -0.6711713, 0.35118842, -0.6472071, -0.73511875, -0.20180057, 0.39360794, -0.095548816,-0.9142993,
+            # Vel: 1.8516884,-2.5072212, 1.4410081,
+            # Omega: 1.6270527,0.8192762,-1.6372595,
+            # Thrusts: -2.1386003,-1.7982007,-2.6839209,-2.6245813
+
             y0 = dp[1, :, :]
             y0[:, -4:] = feat[:, -4:, i]
             preds[:, :, i] = dp[1, :, :]
+            preds[:, :3, i] += offsets  # offset positions back to original
 
         # compute loss
         # errs, loss = get_error_and_loss(dp, targ, learn_configs, device)
@@ -180,7 +191,12 @@ def run_train(args, model, train_loader, device, optimizer):
         t_eval = (ts[1, 0:2] - ts[1, 0]).to(device)
         t_eval = t_eval.type(torch.float32)
         # get network prediction
+
         y0 = feat[:, :, 0]
+        offsets = y0[:, :3].detach().clone()
+        y0[:, :3] = y0[:, :3] - offsets #offset position for all
+        for i in range(feat.shape[2]):
+            feat[:, :3, i] -= y0[:,:3] #offset positions to around 0
         # TODO, to get the network to work with float32 try setting this to float 32
         preds = torch.zeros((feat.shape[0], feat.shape[1], feat.shape[2] - 1)).to(device)
         for i in range(feat.shape[2] - 1):
@@ -188,6 +204,7 @@ def run_train(args, model, train_loader, device, optimizer):
             y0 = dp[1, :, :].detach().clone()
             y0[:, -4:] = feat[:, -4:, i]
             preds[:, :, i] = dp[1, :, :]
+            preds[:, :3, i] += offsets #offset positions back to original
 
         # compute loss
         errs, loss = get_error_and_loss(preds, targ)
@@ -291,6 +308,7 @@ def main():
     start_t = time.time()
     train_list = get_datalist(os.path.join(args.root_dir, args.dataset, args.train_list))
     try:
+        example = parse_data(args, train_list)
         train_dataset = ModelDataset(
             args.root_dir, args.dataset, train_list, args, args.predict_horizon, mode="train")
         train_loader = DataLoader(
@@ -415,6 +433,51 @@ def main():
                 save_model(args, epoch, model, optimizer)
 
     logging.info("Training complete.")
+
+import matplotlib.pyplot as plt
+def parse_data(args, train_list):
+    example_dataset = ModelDataset(
+        args.root_dir, args.dataset, train_list, args, 1, mode="display")
+    import csv
+    from src.learning.utils.pose import fromQuatToEulerAng, xyzwQuatFromMat
+    num = 500
+    full_feats = np.zeros((num, example_dataset[0][0].shape[0]))
+    with open("example.csv", "w", newline='') as csv_file:
+        last_euler = fromQuatToEulerAng(xyzwQuatFromMat(example_dataset[0][0][3:12].reshape((3,3))))
+        last_rot = example_dataset[0][0][3:12].reshape((3,3))
+        last_pose = example_dataset[0][0][0:3].flatten()
+        last_ts = example_dataset[0][3]
+        writer = csv.writer(csv_file, delimiter=',')
+        for i in range(num):
+            feat, v_init, targ, ts, _, _ = example_dataset[i]
+            feat = feat.flatten()
+            rot = feat[3:12].reshape((3,3))
+            euler = np.pi*fromQuatToEulerAng(xyzwQuatFromMat(rot))/180.0
+
+            r_dot = ((rot - last_rot) / (ts - last_ts))
+            w_hat = rot.T @ r_dot
+            omega = np.array([w_hat[2,1], w_hat[0,2], w_hat[1, 0]])
+            last_rot = rot
+            vel = rot.T @ ((feat[0:3] - last_pose) / (ts - last_ts))
+
+            last_pose = feat[0:3]
+            last_ts = ts
+            line = np.zeros((18,))
+            line[0:3] = feat[0:3]
+            line[3:6] = euler
+
+            line[6:9] = vel #should be body velocity
+            line[9:12] = feat[12:15] # calculated body velocity
+            line[12:15] = targ[12:15].flatten()
+            # line[12:15] = omega #calculated omega from gt rotations
+            # line[15:18] = feat[15:18] #omega from calibrated imu
+            writer.writerow(line)
+            full_feats[i,:] = feat.flatten()
+
+    print("WROTE CSV!!")
+
+
+
 
 
 if __name__ == "__main__":

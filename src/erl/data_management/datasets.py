@@ -71,7 +71,7 @@ class ModelSequence(CompiledSequence):
             gyro_calib = np.copy(f["gyro_calib"])
             thrust = np.copy(f["thrust"])
             i_thrust = np.copy(f["i_thrust"])  # in imu frame
-            full_thrust = np.copy(f["full_thrust"])
+            full_thrust = -1*np.copy(f["full_thrust"])
             traj_target = np.copy(f["traj_target"])
 
         assert thrust.shape[0] == gyro_calib.shape[0], \
@@ -80,22 +80,34 @@ class ModelSequence(CompiledSequence):
         # rotate to world frame
         # w_gyro_calib = np.array([pose.xyzwQuatToMat(T_wi[3:7]) @ w_i for T_wi, w_i in zip(traj_target, gyro_calib)])
         #need to use omega values in the body frame for the HNODE
+        imu_to_body_R = np.array([[0, 0, -1], [0, -1, 0], [1, 0, 0]]) #rotates from imu frame to body frame
         gyro_calib_body = np.array([w_i for w_i in gyro_calib])
         # w_thrust = np.array([pose.xyzwQuatToMat(T_wi[3:7]) @ t_i for T_wi, t_i in zip(traj_target, i_thrust)])
         rot_mats = np.array([pose.xyzwQuatToMat(T_wi[3:7]) for T_wi in traj_target]).reshape((gyro_calib_body.shape[0], 9))
         poses = np.array([T_wi[0:3] for T_wi in traj_target])
-        vels = np.array([T_wi[7:] for T_wi in traj_target])
 
+
+        # rotate velocities into body frame
+        # TODO VERIFY! Above they use this matrix to rotate gyro_calib into world frame, so i assume I use the transpose to rotate velocities into body frame
+        vels_b = np.array([pose.xyzwQuatToMat(T_wi[3:7]).T @ T_wi[7:] for T_wi in traj_target])
+        vels_w = np.array([T_wi[7:] for T_wi in traj_target])
+
+        #set traj_target to use body frame velocities
+
+        new_target = np.zeros((traj_target.shape[0], 15))
+        new_target[:, :3] = traj_target[:, :3]
+        new_target[:, 3:12] = np.array([pose.xyzwQuatToMat(T_wi[3:7]).flatten() for T_wi in traj_target])
+        new_target[:, 12:15] = vels_b
         self.ts = ts
         self.gyro_raw = gyro_raw
         self.thrust = thrust
         self.full_thrust = full_thrust
         # self.feat = np.concatenate([w_gyro_calib, w_thrust, full_thrust, rot_mats], axis=1)
         #TODO find a better way to do the w_ground truth, currently just passing w_gyro_calib,
-        # i talked to sambaran and we're gonna test with this first
+        # i talked to Sambaran and we're gonna test with this first
 
-        self.feat = np.concatenate([poses, rot_mats, vels, gyro_calib_body, full_thrust], axis=1)
-        self.traj_target = traj_target
+        self.feat = np.concatenate([poses, rot_mats, vels_b, gyro_calib_body, full_thrust], axis=1)
+        self.traj_target = new_target
 
     def get_feature(self):
         return self.feat
@@ -133,6 +145,8 @@ class ModelDataset(Dataset):
         elif self.mode == "val":
             self.shuffle = True
         elif self.mode == "test":
+            self.shuffle = False
+        elif self.mode == "display":
             self.shuffle = False
 
         # index_map = [[seq_id, index of the last datapoint in the window], ...]
@@ -179,11 +193,11 @@ class ModelDataset(Dataset):
             # t0m1 = self.ts[seq_id][idxs]
             # pw0m1 = self.targets[seq_id][idxs][0:3]
             # print("idxs is <= 0")
-            vw0 = self.targets[seq_id][idxs][7:]
+            vw0 = self.targets[seq_id][idxs][12:15]
         else:
             # t0m1 = self.ts[seq_id][idxs-1]
             # pw0m1 = self.targets[seq_id][idxs-1][0:3]
-            vw0 = self.targets[seq_id][idxs-1][7:]
+            vw0 = self.targets[seq_id][idxs-1][12:15]
 
         # t0p1 = self.ts[seq_id][idxs+1]
         # pw0p1 = self.targets[seq_id][idxs+1][0:3]
@@ -194,7 +208,7 @@ class ModelDataset(Dataset):
         # pw1 = self.targets[seq_id][idxe][0:3]
 
         # targ = pw1 - pw0
-        targ = self.targets[seq_id][idxs:idxe, :].T
+        targ = self.targets[seq_id][idxs + 1:idxe + 1 + (1 if self.predict_horizon == 1 else 0), :].T
 
         # auxiliary variables
         feat_ts = self.ts[seq_id][indices]
