@@ -20,13 +20,19 @@ class HNODENetwork:
         d = .13  # dist from center of drone to propeller from blackbird dataset
         m1_nom = torch.linalg.inv(torch.eye(3) * MASS)
         m2_nom = torch.linalg.inv(torch.tensor([[4.9e-2, 0, 0], [0, 4.9e-2, 0], [0, 0, 6.9e-2]])) #intertias from blackbird dataset
-        g_nom = torch.tensor([[0, 0, 0, 0],
-                          [0, 0, 0, 0],
-                          [1, 1, 1, 1],
-                          [0, -d, 0, d],
-                          [d, 0, -d, 0],
-                          [-c_t_f, c_t_f, -c_t_f, c_t_f]]) #from https://arxiv.org/pdf/1003.2005.pdf eq 1 with added zero rows to fit the shape required by the model
-        # we use the SE3HamNode model using a 4 dimensional input with the four propeller thrusts as input
+        if args.square_g:
+            g_nom = torch.tensor([[1, 1, 1, 1],
+                                  [0, -d, 0, d],
+                                  [d, 0, -d, 0],
+                                  [-c_t_f, c_t_f, -c_t_f, c_t_f]])
+        else:
+            g_nom = torch.tensor([[0, 0, 0, 0],
+                                  [0, 0, 0, 0],
+                                  [1, 1, 1, 1],
+                                  [0, -d, 0, d],
+                                  [d, 0, -d, 0],
+                                  [-c_t_f, c_t_f, -c_t_f, c_t_f]]) #from https://arxiv.org/pdf/1003.2005.pdf eq 1 with added zero rows to fit the shape required by the model
+            # we use the SE3HamNode model using a 4 dimensional input with the four propeller thrusts as input
         path = os.path.join(self.model_path, self.model_name + ".pt")
         if os.path.isfile(path):
             logging.info(f"Found model, loading from {path}")

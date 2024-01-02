@@ -29,14 +29,15 @@ def get_args():
     parser.add_argument("--val_list", type=str, default="", help="In folder root_dir.")
     parser.add_argument("--test_list", type=str, default="test.txt", help="In folder root_dir.")
     parser.add_argument("--batch_size", type=int, default=128)
+    parser.add_argument("--square_g", action='store_true', default=False)
     parser.add_argument("--lr", type=float, default=5e-04)
     parser.add_argument('--solver', default='rk4', type=str, help='type of ODE Solver for Neural ODE')
     parser.add_argument("--continue_from", type=str, default=None, help="Path to model checkpoint")
-    parser.add_argument("--epochs", type=int, default=1000, help="max num epochs")
+    parser.add_argument("--epochs", type=int, default=15, help="max num epochs")
     parser.add_argument("--num_threads", type=int, default=16)
     parser.add_argument("--cpu", action="store_true")
     parser.add_argument("--nonlinearity", type=str, default="tanh", help="relu,tanh,gelu")
-    add_bool_arg(parser, "perturb_orientation", default=True)
+    add_bool_arg(parser, "perturb_orientation", default=True) #TODO this is usually true
     parser.add_argument(
         "--perturb_orientation_theta_range", type=float, default=5.0
     )  # degrees
@@ -57,7 +58,7 @@ def get_args():
     parser.add_argument(
         "--mode", type=str, default="train", choices=["train", "test", "eval"]
     )
-    parser.add_argument("--predict_horizon", type=int, default=5)
+    parser.add_argument("--predict_horizon", type=int, default=10)
 
     add_bool_arg(parser, "save_plots", default=False)
     add_bool_arg(parser, "show_plots", default=False)

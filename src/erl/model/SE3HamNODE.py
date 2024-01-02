@@ -69,7 +69,12 @@ class SE3HamNODE(torch.nn.Module):
         else:
             self.V_net = V_net
         if g_net is None:
-            self.g_net = MatrixNet(self.posedim, self.hidden_dim , self.twistdim*self.udim, shape=(self.twistdim,self.udim), init_gain=init_gain, nonlinearity=self.nonlinearity).to(device)
+            if args.square_g:
+                self.g_net = MatrixNet(self.posedim, self.hidden_dim, 16,
+                                   shape=(4, self.udim), init_gain=init_gain,
+                                   nonlinearity=self.nonlinearity).to(device)
+            else:
+                self.g_net = MatrixNet(self.posedim, self.hidden_dim , self.twistdim*self.udim, shape=(self.twistdim,self.udim), init_gain=init_gain, nonlinearity=self.nonlinearity).to(device)
         else:
             self.g_net = g_net
 
@@ -220,7 +225,7 @@ class SE3HamNODE(torch.nn.Module):
 
         # g_guess = torch.zeros(self.twistdim, self.udim)
         g_guess = self.g_nominal
-        g_guess = g_guess.reshape((1, self.twistdim, self.udim))
+        g_guess = g_guess.reshape((1, self.g_nominal.shape[0], self.udim))
         g_guess = g_guess.repeat(batch, 1, 1).to(self.device)
 
         optim = torch.optim.Adam(self.g_net.parameters(), 1e-3, weight_decay=0.0)
@@ -274,7 +279,7 @@ class SE3HamNODE(torch.nn.Module):
             # Dw = self.D_net2(q_dot_w)
             V_q = self.V_net(q)
             g_q = self.g_net(q)
-
+            g_q = torch.cat([torch.zeros((g_q.shape[0], 2, 4)).to(self.device), g_q], dim=1)
             # Calculate the Hamiltonian
             p_aug_v = torch.unsqueeze(pv, dim=2)
             p_aug_w = torch.unsqueeze(pw, dim=2)

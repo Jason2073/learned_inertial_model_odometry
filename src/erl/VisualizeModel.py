@@ -28,6 +28,7 @@ def get_args():
     parser.add_argument("--test_list", type=str, default="test.txt", help="In folder root_dir.")
     parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--lr", type=float, default=5e-04)
+    parser.add_argument("--square_g", action='store_true', default=False)
     parser.add_argument('--solver', default='rk4', type=str, help='type of ODE Solver for Neural ODE')
     parser.add_argument("--continue_from", type=str, default=None, help="Path to model checkpoint")
     parser.add_argument("--epochs", type=int, default=1000, help="max num epochs")
